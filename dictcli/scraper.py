@@ -65,11 +65,22 @@ def suggest_words(query: str, limit: int = 5) -> list[str]:
     try:
         resp = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
         resp.raise_for_status()
+    except requests.RequestException as exc:
+        raise NetworkError(f"Network request failed: {exc}") from exc
+    try:
         data = resp.json()
-    except (requests.RequestException, ValueError):
+    except ValueError:
         return []
-    words = []
+    return _parse_suggestions(data, limit=limit)
+
+
+def _parse_suggestions(data, limit: int = 5) -> list[str]:
+    words: list[str] = []
+    if not isinstance(data, list):
+        return words
     for item in data:
+        if not isinstance(item, dict):
+            continue
         w = _clean(item.get("word", ""))
         if w and w not in words:
             words.append(w)
