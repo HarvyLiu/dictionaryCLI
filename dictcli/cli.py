@@ -6,6 +6,7 @@ from rich.console import Console
 from .cache import Cache, Prefetcher, default_dir
 from .formatter import render_word_page
 from .models import WordPage
+from .picker import pick_word
 from .scraper import (
     NetworkError,
     WordNotFoundError,
@@ -57,7 +58,8 @@ def build_parser() -> argparse.ArgumentParser:
             "  dict search app     show matching words like the website dropdown\n"
             "  dict search app -p2 look up the 2nd match directly\n"
             "  dict add serendipity  star a word and keep an offline copy\n"
-            "  dict list           show your starred words\n"
+            "  dict list           browse starred words with arrow keys,\n"
+            "                      enter looks one up (--plain for a plain list)\n"
             "  dict remove apple   unstar a word\n"
             "  dict                enter interactive mode\n"
         ),
@@ -75,6 +77,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         metavar="N",
         help="with 'search': immediately look up the Nth result",
+    )
+    parser.add_argument(
+        "--plain",
+        action="store_true",
+        help="with 'list': print words instead of the arrow-key picker",
     )
     return parser
 
@@ -141,19 +148,10 @@ def _print_candidates(candidates: list[str], query: str) -> None:
 
 
 def _choose_candidate(candidates: list[str]) -> str | None:
-    while True:
-        try:
-            choice = console.input(
-                f"[bold]Pick 1-{len(candidates)}[/] [dim](Enter cancels): [/]"
-            ).strip()
-        except (EOFError, KeyboardInterrupt):
-            console.print()
-            return None
-        if not choice:
-            return None
-        if choice.isdigit() and 1 <= int(choice) <= len(candidates):
-            return candidates[int(choice) - 1]
-        console.print(f"[red]Invalid choice:[/] {choice}")
+    chosen = pick_word(candidates, title="Matches")
+    if chosen is None:
+        console.print("[dim]cancelled.[/]")
+    return chosen
 
 
 def _search(query: str, pick: int | None, interactive: bool = True) -> int:
@@ -318,13 +316,32 @@ def _remove_word(word: str) -> int:
     return 0
 
 
-def _list_words() -> int:
+def _list_words(plain: bool = False) -> int:
     wordlist = Wordlist()
     cache = Cache()
     entries = wordlist.entries()
     if not entries:
         console.print("[dim]Your wordlist is empty. Star words with:[/] dict add <word>")
         return 0
+
+    words = [e.get("word", "?") for e in entries]
+
+    interactive = (
+        not plain
+        and sys.stdin.isatty()
+        and sys.stdout.isatty()
+    )
+    if interactive:
+        while True:
+            chosen = pick_word(words, title="Your words")
+            if chosen is None:
+                return 0
+            console.print()
+            _lookup_full(chosen)
+            if sys.stdin.isatty() and sys.stdout.isatty():
+                continue
+            return 0
+
     console.print(f"[bold]Wordlist[/] [dim]({len(entries)})[/]")
     for e in entries:
         w = e.get("word", "?")
@@ -347,7 +364,8 @@ def _repl() -> int:
     state = "[green]ON[/]" if cache.enabled else "[red]OFF[/]"
     console.print(
         "[bold cyan]Cambridge Dictionary CLI[/] "
-        f"[dim]- type a word, :s <query> search, :a add last, :rm, :q quit | cache: {state}[/]"
+        f"[dim]- type a word, :s <query> search, :w browse list, :a add last, "
+        f":rm, :q quit | cache: {state}[/]"
     )
     last_word: str | None = None
     last_status = 0
@@ -363,6 +381,15 @@ def _repl() -> int:
             lowered = line.lower()
             if lowered in {":q", ":quit", ":exit"}:
                 break
+            if lowered in {":w", ":wl", ":words"}:
+                starred = [e.get("word", "?") for e in wordlist.entries()]
+                chosen = pick_word(starred, title="Your words")
+                if chosen:
+                    console.print()
+                    last_status, resolved = _lookup_full(chosen)
+                    if resolved:
+                        last_word = resolved
+                continue
             if lowered in {":a", ":add"}:
                 if not last_word:
                     console.print("[dim]nothing looked up yet.[/]")
@@ -422,7 +449,7 @@ def main(argv: list[str] | None = None) -> int:
         return _remove_word(" ".join(words[1:]).strip())
 
     if words[0].lower() in {"list", "ls"}:
-        return _list_words()
+        return _list_words(plain=args.plain)
 
     if words[0].lower() == "search":
         query = " ".join(words[1:]).strip()
