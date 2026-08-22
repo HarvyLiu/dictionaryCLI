@@ -21,7 +21,7 @@ from .wordlist import Wordlist
 
 console = Console()
 
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 
 SEARCH_LIMIT = 8
 
@@ -58,7 +58,8 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=(
             "examples:\n"
             "  dict apple          look up 'apple'\n"
-            "  dict apple --audio  look up and play UK pronunciation\n"
+            "  dict apple --audio     look up and play UK pronunciation\n"
+            "  dict apple --audio us  look up and play US pronunciation\n"
             "  dict give up        look up a phrase\n"
             "  dict search app     show matching words like the website dropdown\n"
             "  dict search app -p2 look up the 2nd match directly\n"
@@ -96,7 +97,7 @@ def build_parser() -> argparse.ArgumentParser:
         const="uk",
         choices=["uk", "us"],
         metavar="UK|US",
-        help="play pronunciation after a lookup (default: uk)",
+        help="play pronunciation after a lookup - 'uk' (default) or 'us'",
     )
     parser.add_argument(
         "--no-fetch",
@@ -471,6 +472,23 @@ def _import_words(path_str: str, fetch: bool = True) -> int:
     return 0 if not failed or added or skipped else 1
 
 
+def _repl_audio(target: str | None, variant: str, cache: Cache) -> None:
+    if not target:
+        console.print("[dim]usage: :v[k|s] <word>  (or look one up first)[/]")
+        return
+    page = cache.load_word(target)
+    if page is None:
+        try:
+            page = fetch_word(target)
+        except LookupError as exc:
+            console.print(f"[yellow]audio unavailable:[/] {exc}")
+            return
+    if page.found:
+        _play_audio(page, variant)
+    else:
+        console.print(f"[red]'{target}' not found.[/]")
+
+
 def _is_cache_cmd(line: str) -> bool:
     parts = line.lower().split()
     return len(parts) >= 1 and parts[0] == "cache"
@@ -486,7 +504,7 @@ def _repl() -> int:
     console.print(
         "[bold cyan]Cambridge Dictionary CLI[/] "
         f"[dim]- type a word, :s <query> search, :w browse list, :a add last, "
-        f":v audio, :rm, :q quit | cache: {state}[/]"
+        f":vk/:vs audio, :rm, :q quit | cache: {state}[/]"
     )
     last_word: str | None = None
     last_status = 0
@@ -512,21 +530,11 @@ def _repl() -> int:
                         last_word = resolved
                 continue
             if lowered.startswith(":v"):
-                target = line[2:].strip() or last_word
-                if not target:
-                    console.print("[dim]usage: :v <word> (or look one up first)[/]")
-                    continue
-                page = cache.load_word(target)
-                if page is None:
-                    try:
-                        page = fetch_word(target)
-                    except LookupError as exc:
-                        console.print(f"[yellow]audio unavailable:[/] {exc}")
-                        continue
-                if page.found:
-                    _play_audio(page, "uk")
-                else:
-                    console.print(f"[red]'{target}' not found.[/]")
+                parts = line.split(None, 1)
+                cmd = parts[0].lower()
+                arg = parts[1].strip() if len(parts) > 1 else ""
+                variant = {"vk": "uk", "vs": "us"}.get(cmd.lstrip(":"), "uk")
+                _repl_audio(arg or last_word, variant, cache)
                 continue
             if lowered in {":a", ":add"}:
                 if not last_word:

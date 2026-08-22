@@ -87,7 +87,7 @@ dict>
 | `:s <query>` | search with candidates |
 | `:w` | open the wordlist picker |
 | `:a` | star the last word you looked up |
-| `:v [word]` | play pronunciation |
+| `:vk` / `:vs [word]` | play UK / US pronunciation |
 | `:rm [word]` | unstar |
 | `:cache on/off/status` | toggle caching mid-session |
 | `:q`, Ctrl+C | quit |
