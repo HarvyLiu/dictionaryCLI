@@ -1,16 +1,20 @@
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
 
 from rich.console import Console
+from rich.rule import Rule
 from rich.table import Table
+from rich.text import Text
 
 from .audio import play_url
-from .cache import Cache, Prefetcher, default_dir, slugify
+from .cache import Cache, Prefetcher, _page_to_dict, default_dir, slugify
 from .formatter import render_word_page
 from .models import WordPage
 from .picker import pick_word
+from .quiz import build_questions
 from .scraper import (
     LookupError,
     NetworkError,
@@ -22,7 +26,7 @@ from .wordlist import Wordlist
 
 console = Console()
 
-VERSION = "0.5.2"
+VERSION = "0.6.0"
 
 BANNER = r"""
   ____                ____  _      _    ____ _     ___
@@ -76,6 +80,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  dict list           browse starred words with arrow keys,\n"
             "                      enter looks one up (--plain for a plain list)\n"
             "  dict remove apple   unstar a word\n"
+            "  dict quiz           MCQ quiz from your starred words\n"
             "  dict export my-words.txt    save wordlist as plain text\n"
             "  dict import my-words.txt    star every word in a text file\n"
             "  dict                enter interactive mode\n"
@@ -113,6 +118,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="with 'import': star words without downloading their definitions",
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="with lookup/search: print machine-readable JSON instead of formatted text",
+    )
     return parser
 
 
@@ -131,18 +141,32 @@ def _play_audio(page: WordPage, variant: str) -> None:
     console.print("[yellow]no audio found for this word.[/]")
 
 
-def _lookup_full(word: str, say: str | None = None) -> tuple[int, str | None]:
+def _page_json(page: WordPage) -> dict:
+    data = _page_to_dict(page)
+    data["found"] = True
+    return data
+
+
+def _lookup_full(
+    word: str, say: str | None = None, as_json: bool = False
+) -> tuple[int, str | None]:
     cache = Cache()
     try:
         page = fetch_word(word)
     except WordNotFoundError:
         page = WordPage(word=word)
     except NetworkError as exc:
+        if as_json:
+            print(json.dumps({"ok": False, "error": str(exc)}))
+            return 2, None
         return _offline_lookup(word, f"Network request failed ({exc})"), None
 
     if page.found:
         if cache.enabled:
             cache.save_page(page)
+        if as_json:
+            print(json.dumps(_page_json(page), ensure_ascii=False))
+            return 0, page.word
         render_word_page(page)
         if say:
             _play_audio(page, say)
@@ -151,13 +175,25 @@ def _lookup_full(word: str, say: str | None = None) -> tuple[int, str | None]:
     try:
         page.suggestions = suggest_words(word)
     except NetworkError as exc:
+        if as_json:
+            print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+            return 2, None
         return _offline_lookup(word, f"Network request failed ({exc})"), None
+
+    if as_json:
+        print(
+            json.dumps(
+                {"word": page.word, "found": False, "suggestions": page.suggestions},
+                ensure_ascii=False,
+            )
+        )
+        return 1, None
     render_word_page(page)
     return 1, None
 
 
-def _lookup(word: str, say: str | None = None) -> int:
-    return _lookup_full(word, say=say)[0]
+def _lookup(word: str, say: str | None = None, as_json: bool = False) -> int:
+    return _lookup_full(word, say=say, as_json=as_json)[0]
 
 
 def _offline_lookup(word: str, reason: str) -> int:
@@ -201,16 +237,38 @@ def _choose_candidate(candidates: list[str]) -> str | None:
     return chosen
 
 
-def _search(query: str, pick: int | None, interactive: bool = True, say: str | None = None) -> int:
+def _search(
+    query: str,
+    pick: int | None,
+    interactive: bool = True,
+    say: str | None = None,
+    as_json: bool = False,
+) -> int:
     try:
         candidates = suggest_words(query, limit=SEARCH_LIMIT)
     except NetworkError as exc:
+        if as_json:
+            print(json.dumps({"ok": False, "error": str(exc)}))
+            return 2
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
     if not candidates:
+        if as_json:
+            print(json.dumps({"query": query, "candidates": []}))
+            return 1
         console.print(f"[bold red]No matches for '{query}'.[/]")
         return 1
+
+    if as_json:
+        if pick is not None:
+            if not 1 <= pick <= len(candidates):
+                print(json.dumps({"ok": False, "error": "-p out of range"}))
+                return 1
+            console.print()
+            return _lookup(candidates[pick - 1], say=say, as_json=True)
+        print(json.dumps({"query": query, "candidates": candidates}, ensure_ascii=False))
+        return 0
 
     _print_candidates(candidates, query)
 
@@ -498,6 +556,85 @@ def _repl_audio(target: str | None, variant: str, cache: Cache) -> None:
         console.print(f"[red]'{target}' not found.[/]")
 
 
+def _quiz_cmd(args_list: list[str]) -> int:
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        print("error: quiz needs an interactive terminal", file=sys.stderr)
+        return 2
+
+    count = 10
+    if args_list and args_list[0].isdigit():
+        count = max(3, min(50, int(args_list[0])))
+
+    wordlist = Wordlist()
+    cache = Cache()
+    questions = build_questions(
+        cache, [e.get("word", "") for e in wordlist.entries()], count=count
+    )
+    if questions is None:
+        console.print("[bold red]Not enough words to build a quiz.[/]")
+        console.print(
+            "[dim]Star at least 4 words with offline copies first:[/] dict add <word>"
+        )
+        return 1
+
+    import questionary
+    from questionary import Choice
+
+    letters = "ABCD"
+    score = 0
+    asked = 0
+    total = len(questions)
+
+    for i, q in enumerate(questions, start=1):
+        console.print()
+        console.print(Rule(f"[bold]Question {i} of {total}[/]", style="dim"))
+        if q.direction == "def->word":
+            console.print("[dim]Which word means:[/]")
+            console.print(Text("  " + q.prompt, style="italic"))
+        else:
+            console.print("[dim]What does this mean?[/]")
+            console.print(Text("  " + q.prompt, style="bold cyan"))
+
+        choices = [
+            Choice(title=f"({letters[j]}) {opt}", value=j)
+            for j, opt in enumerate(q.options)
+        ]
+        try:
+            picked = questionary.select(
+                "Answer:",
+                choices=choices,
+                instruction="[arrow keys, enter to submit]",
+                use_search_filter=False,
+                use_jk_keys=False,
+            ).ask()
+        except KeyboardInterrupt:
+            picked = None
+
+        if picked is None:
+            console.print(f"\n[yellow]Quiz ended early after {asked} of {total}.[/]")
+            break
+
+        asked += 1
+        if picked == q.correct_index:
+            score += 1
+            console.print(f"  [green]\u2713 Correct![/]  [dim]score: {score}/{asked}[/]")
+        else:
+            right = f"({letters[q.correct_index]}) {q.options[q.correct_index]}"
+            console.print(f"  [red]\u2717 Wrong.[/] Answer: {right}")
+            console.print(f"  [yellow]{q.answer_word}[/]  [dim]score: {score}/{asked}[/]")
+
+    console.print()
+    pct = int(score * 100 / asked) if asked else 0
+    style = "green" if pct >= 80 else "yellow" if pct >= 50 else "red"
+    verdict = "Great job!" if pct >= 80 else "Not bad!" if pct >= 50 else "Keep practicing!"
+    console.print(Rule(style="dim"))
+    console.print(
+        Text(f"Final score: {score}/{asked or total}", style=f"bold {style}")
+        .append(f"  ({pct}%) - {verdict}", style=style)
+    )
+    return 0
+
+
 def _is_cache_cmd(line: str) -> bool:
     parts = line.lower().split()
     return len(parts) >= 1 and parts[0] == "cache"
@@ -511,6 +648,7 @@ REPL_COMMANDS = [
     (":rm [word]", "unstar a word (default: last lookup)"),
     (":vk [word]", "play UK pronunciation"),
     (":vs [word]", "play US pronunciation"),
+    (":quiz [count]", "MCQ quiz from your starred words"),
     (":cache on/off/status/list/clear", "manage the offline cache"),
     (":h", "show this help"),
     (":q", "quit"),
@@ -554,6 +692,9 @@ def _repl() -> int:
             lowered = line.lower()
             if lowered in {":q", ":quit", ":exit"}:
                 break
+            if lowered.startswith(":quiz"):
+                _quiz_cmd([line[5:].strip()] if line[5:].strip() else [])
+                continue
             if lowered in {":h", ":help"}:
                 _repl_help()
                 continue
@@ -622,6 +763,9 @@ def main(argv: list[str] | None = None) -> int:
     if not words:
         return _repl()
 
+    if words[0].lower() == "quiz":
+        return _quiz_cmd(words[1:])
+
     if words[0].lower() == "cache":
         return _cache_cmd(words[1:])
 
@@ -638,7 +782,7 @@ def main(argv: list[str] | None = None) -> int:
         query = " ".join(words[1:]).strip()
         if not query:
             parser.error("search requires a query")
-        return _search(query, args.pick, say=args.audio)
+        return _search(query, args.pick, say=args.audio, as_json=args.json)
 
     if words[0].lower() == "export":
         return _export_words(" ".join(words[1:]).strip())
@@ -649,7 +793,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.pick is not None:
         parser.error("-p/--pick only works with 'search'")
 
-    return _lookup(" ".join(words), say=args.audio)
+    return _lookup(" ".join(words), say=args.audio, as_json=args.json)
 
 
 if __name__ == "__main__":

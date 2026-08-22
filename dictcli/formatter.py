@@ -50,6 +50,11 @@ def _render_entry(entry: Entry, number: int | None = None) -> None:
     if entry.grammar:
         title.append(f" {entry.grammar}", style="dim")
     console.print(title)
+    if entry.synonyms:
+        syn = Text("  synonyms: ", style="dim").append(
+            " - ".join(entry.synonyms), style="magenta"
+        )
+        console.print(syn)
 
     def_number = 0
     for group in entry.sense_groups:

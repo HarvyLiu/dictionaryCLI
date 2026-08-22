@@ -123,6 +123,7 @@ def _parse_entry(el) -> Entry:
 
     entry.audio_uk = _audio_url(el, "span.uk.dpron-i")
     entry.audio_us = _audio_url(el, "span.us.dpron-i")
+    entry.synonyms = _parse_synonyms(el)
 
     for ds in el.select(".pr.dsense"):
         gw_el = ds.select_one(".guideword.dsense_hw") or ds.select_one(".guideword")
@@ -141,6 +142,20 @@ def _parse_entry(el) -> Entry:
             entry.sense_groups.append(group)
 
     return entry
+
+
+def _parse_synonyms(el) -> list[str]:
+    synonyms: list[str] = []
+    seen: set[str] = set()
+    for a in el.select(".daccord_lb li a"):
+        href = a.get("href", "")
+        if not href.startswith("/thesaurus/") or "/thesaurus/articles/" in href:
+            continue
+        text = _clean(a.get_text())
+        if text and text.lower() not in seen:
+            seen.add(text.lower())
+            synonyms.append(text)
+    return synonyms[:8]
 
 
 def _audio_url(el, container_sel: str) -> str | None:

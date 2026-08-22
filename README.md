@@ -26,6 +26,10 @@ noun [ C or U ]
 - **Wordlists** - star words, browse them in an arrow-key picker, export/import as plain
   text
 - **Audio** - play real Cambridge UK/US pronunciations
+- **Quiz** (`dict quiz`) - MCQ flashcards from your starred words, both directions:
+  definition → word and word → definition, with A/B/C/D arrow-key choices and a score
+- **Synonyms** - entries show their thesaurus synonyms when Cambridge has them
+- **`--json`** - machine-readable output for lookups and search
 
 Works on Windows, macOS, and Linux.
 
@@ -66,6 +70,7 @@ pip install .
 | `dict remove apple` | unstar a word (alias: `rm`) |
 | `dict list` | arrow-key browser for starred words; Enter looks one up |
 | `dict list --plain` | plain-text listing instead of the picker |
+| `dict quiz` | MCQ quiz from starred words (`dict quiz 20` for 20 questions) |
 | `dict export my-words.txt` | write your wordlist as plain text |
 | `dict import my-words.txt` | star every word in a text file (`--no-fetch` to skip downloads) |
 | `dict cache on/off/status/list/clear` | manage the offline cache |
@@ -87,6 +92,7 @@ dict> :h
 | `:a` | star the last word you looked up |
 | `:vk` / `:vs [word]` | play UK / US pronunciation |
 | `:rm [word]` | unstar |
+| `:quiz [count]` | start an MCQ quiz |
 | `:cache on/off/status` | toggle caching mid-session |
 | `:h` | show the command table |
 | `:q`, Ctrl+C | quit |

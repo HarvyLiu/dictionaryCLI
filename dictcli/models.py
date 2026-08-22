@@ -23,6 +23,7 @@ class Entry:
     ipa_us: str | None = None
     audio_uk: str | None = None
     audio_us: str | None = None
+    synonyms: list[str] = field(default_factory=list)
     sense_groups: list[SenseGroup] = field(default_factory=list)
 
 
