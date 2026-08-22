@@ -14,7 +14,7 @@ LABEL_STYLE = "red dim"
 EXAMPLE_STYLE = "italic"
 
 
-def render_word_page(page: WordPage) -> None:
+def render_word_page(page: WordPage, cached: bool = False) -> None:
     if not page.found:
         _render_not_found(page)
         return
@@ -32,6 +32,8 @@ def render_word_page(page: WordPage) -> None:
     for text, style in ipa_parts:
         line.append(f"  {text}", style)
     console.print(line)
+    if cached:
+        console.print(Text("  [offline - showing saved copy]", style="dim yellow"))
     console.print(Rule(style="dim"))
 
     for i, entry in enumerate(page.entries):
