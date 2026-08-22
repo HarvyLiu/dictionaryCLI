@@ -64,8 +64,10 @@ class Cache:
     def path_for(self, word: str) -> Path:
         return self.words_dir / f"{slugify(word)}.json"
 
-    def save_page(self, page: WordPage) -> bool:
-        if not self.enabled or not page.found or not slugify(page.word):
+    def save_page(self, page: WordPage, force: bool = False) -> bool:
+        if not force and not self.enabled:
+            return False
+        if not page.found or not slugify(page.word):
             return False
         key = slugify(page.word)
         payload = {
