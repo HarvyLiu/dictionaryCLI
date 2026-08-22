@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dictcli"
-version = "0.5.1"
+version = "0.5.2"
 description = "Cambridge Dictionary in your terminal - definitions, examples, audio, offline cache and wordlists"
 readme = "README.md"
 license = { text = "MIT" }

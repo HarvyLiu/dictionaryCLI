@@ -73,12 +73,10 @@ pip install .
 
 ### Interactive mode
 
-Run `dict` with no arguments:
+Run `dict` with no arguments - you get an ASCII banner and a command table:
 
 ```
-Cambridge Dictionary CLI - type a word, :s <query> search, :w browse list,
-:a add last, :v audio, :rm, :q quit | cache: OFF
-dict>
+dict> :h
 ```
 
 | Shortcut | Action |
@@ -90,6 +88,7 @@ dict>
 | `:vk` / `:vs [word]` | play UK / US pronunciation |
 | `:rm [word]` | unstar |
 | `:cache on/off/status` | toggle caching mid-session |
+| `:h` | show the command table |
 | `:q`, Ctrl+C | quit |
 
 ## Offline cache

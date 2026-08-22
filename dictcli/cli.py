@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 
 from rich.console import Console
+from rich.table import Table
 
 from .audio import play_url
 from .cache import Cache, Prefetcher, default_dir, slugify
@@ -21,7 +22,15 @@ from .wordlist import Wordlist
 
 console = Console()
 
-VERSION = "0.5.1"
+VERSION = "0.5.2"
+
+BANNER = r"""
+  ____                ____  _      _    ____ _     ___
+ / ___|__ _ _ __ ___ |  _ \(_) ___| |_ / ___| |   |_ _|
+| |   / _` | '_ ` _ \| | | | |/ __| __| |   | |    | |
+| |__| (_| | | | | | | |_| | | (__| |_| |___| |___ | |
+ \____\__,_|_| |_| |_|____/|_|\___|\__|\____|_____|___|
+"""
 
 SEARCH_LIMIT = 8
 
@@ -494,17 +503,42 @@ def _is_cache_cmd(line: str) -> bool:
     return len(parts) >= 1 and parts[0] == "cache"
 
 
+REPL_COMMANDS = [
+    ("<word>", "look up a word or phrase"),
+    (":s <query>", "search - matching words like the website dropdown"),
+    (":w", "browse starred words with arrow keys, enter looks up"),
+    (":a [word]", "star a word and keep an offline copy (default: last lookup)"),
+    (":rm [word]", "unstar a word (default: last lookup)"),
+    (":vk [word]", "play UK pronunciation"),
+    (":vs [word]", "play US pronunciation"),
+    (":cache on/off/status/list/clear", "manage the offline cache"),
+    (":h", "show this help"),
+    (":q", "quit"),
+]
+
+
+def _repl_help() -> None:
+    table = Table(box=None, show_header=False, padding=(0, 2), pad_edge=False)
+    table.add_column(style="bold cyan", no_wrap=True)
+    table.add_column(style="dim")
+    for cmd, desc in REPL_COMMANDS:
+        table.add_row(cmd, desc)
+    console.print(table)
+
+
 def _repl() -> int:
     cache = Cache()
     wordlist = Wordlist()
     prefetcher = Prefetcher(cache)
     prefetcher.start()
 
+    console.print(BANNER, style="bold cyan", markup=False, highlight=False)
+    _repl_help()
     state = "[green]ON[/]" if cache.enabled else "[red]OFF[/]"
+    stats = cache.stats()
     console.print(
-        "[bold cyan]Cambridge Dictionary CLI[/] "
-        f"[dim]- type a word, :s <query> search, :w browse list, :a add last, "
-        f":vk/:vs audio, :rm, :q quit | cache: {state}[/]"
+        f"[dim]offline cache: {state}"
+        f" - {stats['count']} words saved. Type a word to begin.[/]"
     )
     last_word: str | None = None
     last_status = 0
@@ -520,6 +554,9 @@ def _repl() -> int:
             lowered = line.lower()
             if lowered in {":q", ":quit", ":exit"}:
                 break
+            if lowered in {":h", ":help"}:
+                _repl_help()
+                continue
             if lowered in {":w", ":wl", ":words"}:
                 starred = [e.get("word", "?") for e in wordlist.entries()]
                 chosen = pick_word(starred, title="Your words")
