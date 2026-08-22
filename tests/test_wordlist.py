@@ -4,8 +4,6 @@ import dictcli.cli as cli
 from dictcli.cache import Cache
 from dictcli.wordlist import Wordlist
 
-from tests.test_scraper import FIXTURES, parse_html
-
 
 @pytest.fixture()
 def wl(tmp_path):
@@ -39,12 +37,6 @@ class TestWordlistStorage:
         wl.add("apple")
         entry = wl.entries()[0]
         assert "added_at" in entry
-
-
-@pytest.fixture(scope="module")
-def apple_page():
-    html = (FIXTURES / "apple.html").read_text(encoding="utf-8")
-    return parse_html(html, word="apple")
 
 
 class TestAddFlow:

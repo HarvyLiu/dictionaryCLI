@@ -1,28 +1,19 @@
-from pathlib import Path
-
 import pytest
 
 from dictcli.audio import play_url
 from dictcli.scraper import parse_html
-from tests.test_scraper import FIXTURES
-
-
-@pytest.fixture(scope="module")
-def page():
-    html = (FIXTURES / "apple.html").read_text(encoding="utf-8")
-    return parse_html(html, word="apple")
 
 
 class TestAudioExtraction:
-    def test_uk_audio_url(self, page):
-        entry = page.entries[0]
+    def test_uk_audio_url(self, apple_page):
+        entry = apple_page.entries[0]
         assert entry.audio_uk is not None
         assert entry.audio_uk.startswith("https://dictionary.cambridge.org/media/")
         assert entry.audio_uk.endswith(".mp3")
 
-    def test_us_audio_url(self, page):
-        assert page.entries[0].audio_us is not None
-        assert "/us_pron/" in page.entries[0].audio_us
+    def test_us_audio_url(self, apple_page):
+        assert apple_page.entries[0].audio_us is not None
+        assert "/us_pron/" in apple_page.entries[0].audio_us
 
     def test_missing_audio_is_none(self):
         html = "<html><body><div class='pr dictionary'><p>empty</p></div></body></html>"

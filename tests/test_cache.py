@@ -3,20 +3,12 @@ import json
 import pytest
 
 from dictcli.cache import Cache, slugify
-from dictcli.models import Definition, Entry, SenseGroup, WordPage
-from dictcli.scraper import parse_html
-from tests.test_scraper import FIXTURES
+from dictcli.models import Entry, WordPage
 
 
 @pytest.fixture()
 def cache(tmp_path):
     return Cache(base_dir=tmp_path, enabled=True)
-
-
-@pytest.fixture(scope="module")
-def apple_page() -> WordPage:
-    html = (FIXTURES / "apple.html").read_text(encoding="utf-8")
-    return parse_html(html, word="apple")
 
 
 class TestSlugify:
