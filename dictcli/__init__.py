@@ -1,0 +1,1 @@
+"""dictcli - Cambridge Dictionary CLI."""
