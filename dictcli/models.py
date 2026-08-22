@@ -21,6 +21,8 @@ class Entry:
     grammar: str | None = None
     ipa_uk: str | None = None
     ipa_us: str | None = None
+    audio_uk: str | None = None
+    audio_us: str | None = None
     sense_groups: list[SenseGroup] = field(default_factory=list)
 
 

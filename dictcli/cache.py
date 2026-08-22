@@ -138,6 +138,8 @@ def _page_to_dict(page: WordPage) -> dict:
                 "grammar": e.grammar,
                 "ipa_uk": e.ipa_uk,
                 "ipa_us": e.ipa_us,
+                "audio_uk": e.audio_uk,
+                "audio_us": e.audio_us,
                 "sense_groups": [
                     {
                         "guideword": g.guideword,
@@ -189,6 +191,8 @@ def _entry_from_dict(e: dict):
         grammar=e.get("grammar"),
         ipa_uk=e.get("ipa_uk"),
         ipa_us=e.get("ipa_us"),
+        audio_uk=e.get("audio_uk"),
+        audio_us=e.get("audio_us"),
         sense_groups=groups,
     )
 

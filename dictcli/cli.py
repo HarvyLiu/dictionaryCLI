@@ -1,13 +1,17 @@
 import argparse
 import sys
+import time
+from pathlib import Path
 
 from rich.console import Console
 
-from .cache import Cache, Prefetcher, default_dir
+from .audio import play_url
+from .cache import Cache, Prefetcher, default_dir, slugify
 from .formatter import render_word_page
 from .models import WordPage
 from .picker import pick_word
 from .scraper import (
+    LookupError,
     NetworkError,
     WordNotFoundError,
     fetch_word,
@@ -17,7 +21,7 @@ from .wordlist import Wordlist
 
 console = Console()
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 
 SEARCH_LIMIT = 8
 
@@ -54,6 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=(
             "examples:\n"
             "  dict apple          look up 'apple'\n"
+            "  dict apple --audio  look up and play UK pronunciation\n"
             "  dict give up        look up a phrase\n"
             "  dict search app     show matching words like the website dropdown\n"
             "  dict search app -p2 look up the 2nd match directly\n"
@@ -61,6 +66,8 @@ def build_parser() -> argparse.ArgumentParser:
             "  dict list           browse starred words with arrow keys,\n"
             "                      enter looks one up (--plain for a plain list)\n"
             "  dict remove apple   unstar a word\n"
+            "  dict export my-words.txt    save wordlist as plain text\n"
+            "  dict import my-words.txt    star every word in a text file\n"
             "  dict                enter interactive mode\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -83,10 +90,38 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="with 'list': print words instead of the arrow-key picker",
     )
+    parser.add_argument(
+        "--audio",
+        nargs="?",
+        const="uk",
+        choices=["uk", "us"],
+        metavar="UK|US",
+        help="play pronunciation after a lookup (default: uk)",
+    )
+    parser.add_argument(
+        "--no-fetch",
+        action="store_true",
+        help="with 'import': star words without downloading their definitions",
+    )
     return parser
 
 
-def _lookup_full(word: str) -> tuple[int, str | None]:
+def _play_audio(page: WordPage, variant: str) -> None:
+    for entry in page.entries:
+        url = entry.audio_uk if variant == "uk" else entry.audio_us
+        url = url or entry.audio_uk or entry.audio_us
+        if not url:
+            continue
+        ok, msg = play_url(url)
+        if ok:
+            console.print(f"[dim]played {variant} pronunciation[/]")
+        else:
+            console.print(f"[yellow]audio unavailable:[/] {msg}")
+        return
+    console.print("[yellow]no audio found for this word.[/]")
+
+
+def _lookup_full(word: str, say: str | None = None) -> tuple[int, str | None]:
     cache = Cache()
     try:
         page = fetch_word(word)
@@ -99,6 +134,8 @@ def _lookup_full(word: str) -> tuple[int, str | None]:
         if cache.enabled:
             cache.save_page(page)
         render_word_page(page)
+        if say:
+            _play_audio(page, say)
         return 0, page.word
 
     try:
@@ -109,8 +146,8 @@ def _lookup_full(word: str) -> tuple[int, str | None]:
     return 1, None
 
 
-def _lookup(word: str) -> int:
-    return _lookup_full(word)[0]
+def _lookup(word: str, say: str | None = None) -> int:
+    return _lookup_full(word, say=say)[0]
 
 
 def _offline_lookup(word: str, reason: str) -> int:
@@ -154,7 +191,7 @@ def _choose_candidate(candidates: list[str]) -> str | None:
     return chosen
 
 
-def _search(query: str, pick: int | None, interactive: bool = True) -> int:
+def _search(query: str, pick: int | None, interactive: bool = True, say: str | None = None) -> int:
     try:
         candidates = suggest_words(query, limit=SEARCH_LIMIT)
     except NetworkError as exc:
@@ -180,7 +217,7 @@ def _search(query: str, pick: int | None, interactive: bool = True) -> int:
         return 0
 
     console.print()
-    return _lookup(chosen)
+    return _lookup(chosen, say=say)
 
 
 def _format_size(size_bytes: int) -> str:
@@ -350,6 +387,90 @@ def _list_words(plain: bool = False) -> int:
     return 0
 
 
+def _export_words(path_str: str) -> int:
+    if not path_str:
+        console.print("[dim]usage: dict export <file.txt>[/]")
+        return 1
+    entries = Wordlist().entries()
+    if not entries:
+        console.print("[dim]Wordlist is empty - nothing to export.[/]")
+        return 1
+    path = Path(path_str)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            for e in entries:
+                f.write(f"{e.get('word', '')}\n")
+    except OSError as exc:
+        print(f"error: could not write {path} ({exc})", file=sys.stderr)
+        return 2
+    console.print(f"[green]Exported {len(entries)} words to[/] {path}")
+    return 0
+
+
+def _import_words(path_str: str, fetch: bool = True) -> int:
+    if not path_str:
+        console.print("[dim]usage: dict import <file.txt> [--no-fetch][/]")
+        return 1
+    path = Path(path_str)
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        print(f"error: could not read {path} ({exc})", file=sys.stderr)
+        return 2
+
+    words = []
+    seen: set[str] = set()
+    for line in lines:
+        w = line.strip()
+        if not w or w.startswith("#"):
+            continue
+        slug = slugify(w)
+        if slug not in seen:
+            seen.add(slug)
+            words.append(w)
+
+    if not words:
+        console.print("[dim]No words found in file (one word per line).[/]")
+        return 1
+
+    wordlist = Wordlist()
+    cache = Cache()
+    added = skipped = failed = 0
+    for i, w in enumerate(words):
+        if wordlist.has(w):
+            skipped += 1
+            continue
+        if fetch:
+            try:
+                page = fetch_word(w)
+            except (NetworkError, WordNotFoundError):
+                failed += 1
+                console.print(f"  [red]failed:[/] {w}")
+                continue
+            if not page.found:
+                failed += 1
+                console.print(f"  [red]not found:[/] {w}")
+                continue
+            cache.save_page(page, force=True)
+            wordlist.add(page.word)
+            added += 1
+            console.print(f"  [green]+ {page.word}[/]")
+            if i < len(words) - 1:
+                time.sleep(0.3)
+        else:
+            wordlist.add(w)
+            added += 1
+            console.print(f"  [green]+ {w}[/] [dim](no offline copy)[/]")
+
+    summary = f"[green]{added} starred[/], {skipped} already present"
+    if failed:
+        summary += f", [red]{failed} failed[/]"
+    if not fetch:
+        summary += "[dim] (run 'dict add <word>' later to save offline copies)[/]"
+    console.print(f"Import from {path}: {summary}")
+    return 0 if not failed or added or skipped else 1
+
+
 def _is_cache_cmd(line: str) -> bool:
     parts = line.lower().split()
     return len(parts) >= 1 and parts[0] == "cache"
@@ -365,7 +486,7 @@ def _repl() -> int:
     console.print(
         "[bold cyan]Cambridge Dictionary CLI[/] "
         f"[dim]- type a word, :s <query> search, :w browse list, :a add last, "
-        f":rm, :q quit | cache: {state}[/]"
+        f":v audio, :rm, :q quit | cache: {state}[/]"
     )
     last_word: str | None = None
     last_status = 0
@@ -389,6 +510,23 @@ def _repl() -> int:
                     last_status, resolved = _lookup_full(chosen)
                     if resolved:
                         last_word = resolved
+                continue
+            if lowered.startswith(":v"):
+                target = line[2:].strip() or last_word
+                if not target:
+                    console.print("[dim]usage: :v <word> (or look one up first)[/]")
+                    continue
+                page = cache.load_word(target)
+                if page is None:
+                    try:
+                        page = fetch_word(target)
+                    except LookupError as exc:
+                        console.print(f"[yellow]audio unavailable:[/] {exc}")
+                        continue
+                if page.found:
+                    _play_audio(page, "uk")
+                else:
+                    console.print(f"[red]'{target}' not found.[/]")
                 continue
             if lowered in {":a", ":add"}:
                 if not last_word:
@@ -455,12 +593,18 @@ def main(argv: list[str] | None = None) -> int:
         query = " ".join(words[1:]).strip()
         if not query:
             parser.error("search requires a query")
-        return _search(query, args.pick)
+        return _search(query, args.pick, say=args.audio)
+
+    if words[0].lower() == "export":
+        return _export_words(" ".join(words[1:]).strip())
+
+    if words[0].lower() == "import":
+        return _import_words(" ".join(words[1:]).strip(), fetch=not args.no_fetch)
 
     if args.pick is not None:
         parser.error("-p/--pick only works with 'search'")
 
-    return _lookup(" ".join(words))
+    return _lookup(" ".join(words), say=args.audio)
 
 
 if __name__ == "__main__":

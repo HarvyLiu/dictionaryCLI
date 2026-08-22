@@ -1,5 +1,5 @@
 import re
-from urllib.parse import quote
+from urllib.parse import quote, urljoin
 
 import requests
 from bs4 import BeautifulSoup
@@ -7,6 +7,7 @@ from bs4 import BeautifulSoup
 from .models import Definition, Entry, SenseGroup, WordPage
 
 BASE_URL = "https://dictionary.cambridge.org/dictionary/english/{word}"
+SITE_URL = "https://dictionary.cambridge.org"
 AUTOCOMPLETE_URL = "https://dictionary.cambridge.org/autocomplete/amp?dataset=english&q={query}"
 
 HEADERS = {
@@ -120,6 +121,9 @@ def _parse_entry(el) -> Entry:
     entry.ipa_uk = _clean(uk.get_text()) if uk else None
     entry.ipa_us = _clean(us.get_text()) if us else None
 
+    entry.audio_uk = _audio_url(el, "span.uk.dpron-i")
+    entry.audio_us = _audio_url(el, "span.us.dpron-i")
+
     for ds in el.select(".pr.dsense"):
         gw_el = ds.select_one(".guideword.dsense_hw") or ds.select_one(".guideword")
         guideword = _clean(gw_el.get_text().strip("≡ ")) if gw_el else None
@@ -137,6 +141,16 @@ def _parse_entry(el) -> Entry:
             entry.sense_groups.append(group)
 
     return entry
+
+
+def _audio_url(el, container_sel: str) -> str | None:
+    container = el.select_one(container_sel)
+    if container is None:
+        return None
+    src = container.select_one(".daud source[type='audio/mpeg']")
+    if src is None or not src.get("src"):
+        return None
+    return urljoin(SITE_URL, src["src"])
 
 
 def _parse_def_block(db) -> Definition:
