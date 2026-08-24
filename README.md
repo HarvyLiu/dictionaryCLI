@@ -83,6 +83,7 @@ pip install .
 | `dict export my-words.txt` | write your wordlist as plain text |
 | `dict import my-words.txt` | star every word in a text file (`--no-fetch` to skip downloads) |
 | `dict cache on/off/status/list/clear` | manage the offline cache |
+| `dict cache remove apple` | delete one saved word (`--lang en-zhs` for a pair copy) |
 | `dict` | interactive mode |
 
 ### Interactive mode

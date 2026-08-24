@@ -168,6 +168,16 @@ class Cache:
                     pass
         return removed
 
+    def remove_word(self, word: str, pair: str = "en") -> bool:
+        path = self.path_for(word, pair)
+        try:
+            if path.exists():
+                path.unlink()
+                return True
+        except OSError:
+            pass
+        return False
+
 
 def _page_to_dict(page: WordPage) -> dict:
     entries = []

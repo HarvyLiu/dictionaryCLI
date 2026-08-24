@@ -27,7 +27,7 @@ from .wordlist import Wordlist
 
 console = Console()
 
-VERSION = "0.8.3"
+VERSION = "0.9.0"
 
 BANNER = r"""
   ____                ____  _      _    ____ _     ___
@@ -46,6 +46,7 @@ CACHE_HELP = (
     "    dict cache on       start saving every word you look up\n"
     "    dict cache off      stop saving (already-saved words are kept)\n"
     "    dict cache status   see where data lives and how much space it uses\n"
+    "    dict cache remove <word>  delete one saved word (--lang for a pair copy)\n"
     "    dict cache clear    delete ALL saved words\n"
     "  With caching ON you can still look up saved words with no internet."
 )
@@ -306,7 +307,7 @@ def _format_size(size_bytes: int) -> str:
     return f"{size_bytes / 1024:.0f} KB"
 
 
-def _cache_cmd(args: list[str]) -> int:
+def _cache_cmd(args: list[str], lang_pair: str | None = None) -> int:
     action = args[0].lower() if args else "status"
     cache = Cache()
 
@@ -321,6 +322,25 @@ def _cache_cmd(args: list[str]) -> int:
         if not cache.enabled:
             console.print("[dim]Enable with 'dict cache on'.[/]")
         return 0
+
+    if action in {"remove", "rm"}:
+        word = " ".join(args[1:]).strip()
+        if not word:
+            console.print("[dim]usage: dict cache remove <word> [--lang pair][/]")
+            return 1
+        pair = "en"
+        if lang_pair:
+            resolved = resolve_pair(lang_pair)
+            if resolved is None:
+                console.print(f"[red]Unknown language pair:[/] {lang_pair}")
+                return 1
+            pair = resolved.code
+        removed = cache.remove_word(word, pair)
+        if removed:
+            console.print(f"[green]Deleted saved copy of '{word}'[/] [dim]({pair})[/]")
+        else:
+            console.print(f"[red]No saved copy of '{word}'[/] [dim]({pair})[/]")
+        return 0 if removed else 1
 
     if action == "on":
         cache.set_enabled(True)
@@ -754,7 +774,7 @@ REPL_COMMANDS = [
     (":vs [word]", "play US pronunciation"),
     (":quiz [count] [--lang pair]", "MCQ quiz (bilingual if pair set)"),
     (":lang [pair]", "show or set language, e.g. :lang en zhs"),
-    (":cache on/off/status/list/clear", "manage the offline cache"),
+    (":cache on/off/status/list/clear/remove", "manage the offline cache"),
     (":h", "show this help"),
     (":q", "quit"),
 ]
@@ -883,7 +903,7 @@ def main(argv: list[str] | None = None) -> int:
         return _quiz_cmd(words[1:])
 
     if words[0].lower() == "cache":
-        return _cache_cmd(words[1:])
+        return _cache_cmd(words[1:], lang_pair=args.lang)
 
     if words[0].lower() == "add":
         return _add_word(" ".join(words[1:]).strip())

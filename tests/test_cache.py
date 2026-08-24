@@ -85,6 +85,21 @@ class TestManagement:
         assert cache.clear() == 1
         assert cache.stats()["count"] == 0
 
+    def test_remove_word_deletes_only_that_copy(self, cache, apple_page):
+        cache.save_page(apple_page)
+        cache.save_page(apple_page, pair="en-zhs")
+        assert cache.remove_word("apple") is True
+        assert not cache.has("apple")
+        assert cache.has("apple", "en-zhs")  # bilingual copy untouched
+
+    def test_remove_word_missing_returns_false(self, cache):
+        assert cache.remove_word("ghost") is False
+
+    def test_remove_word_pair_copy(self, cache, apple_page):
+        cache.save_page(apple_page, pair="en-zhs")
+        assert cache.remove_word("apple", "en-zhs") is True
+        assert not cache.has("apple", "en-zhs")
+
     def test_stats_size(self, cache, apple_page):
         cache.save_page(apple_page)
         stats = cache.stats()
