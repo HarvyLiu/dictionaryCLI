@@ -46,3 +46,11 @@ def test_no_entries_returns_suggestions():
     html = "<html><body><div class='pr dictionary'><p>nope</p></div></body></html>"
     page = parse_html(html, word="xyzzy")
     assert not page.found
+
+
+def test_url_for_sanitizes_slashes():
+    from dictcli.scraper import _url_for
+
+    url = _url_for("ward someone/something off", "en")
+    assert "%2F" not in url
+    assert "ward%20someone-something%20off" in url

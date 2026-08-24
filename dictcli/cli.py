@@ -27,7 +27,7 @@ from .wordlist import Wordlist
 
 console = Console()
 
-VERSION = "0.8.1"
+VERSION = "0.8.2"
 
 BANNER = r"""
   ____                ____  _      _    ____ _     ___
@@ -397,6 +397,16 @@ def _add_word(word: str) -> int:
             return 0
         print(f"error: {exc}", file=sys.stderr)
         return 2
+
+    if not page.found:
+        cached = cache.load_word(word)
+        if cached is not None and cached.found:
+            cache.save_page(cached, force=True)
+            wordlist.add(cached.word)
+            console.print(
+                f"[green]Starred '{cached.word}'[/] [dim](using existing offline copy).[/]"
+            )
+            return 0
 
     if page.found:
         cache.save_page(page, force=True)

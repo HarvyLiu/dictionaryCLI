@@ -47,7 +47,8 @@ def _clean(text: str | None) -> str:
 def _url_for(word: str, pair: str) -> str:
     lang = LANG_PAIRS.get(pair)
     path = lang.path if lang else "english"
-    return f"{SITE_URL}/dictionary/{path}/{quote(word.lower())}"
+    slug = re.sub(r"[/\\]+", "-", word.lower())
+    return f"{SITE_URL}/dictionary/{path}/{quote(slug)}"
 
 
 def _fetch_html(word: str, pair: str = "en") -> tuple[str, str]:
