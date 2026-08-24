@@ -267,25 +267,20 @@ class Prefetcher:
         self._stop_event.set()
 
     def enqueue_related(self, word: str) -> None:
+        """Queue a word for background processing. Never blocks on network."""
         if not self.cache.enabled:
             return
-        from .scraper import NetworkError, suggest_words
-
-        try:
-            related = suggest_words(word, limit=5)
-        except NetworkError:
-            return
-        for w in related:
-            slug = slugify(w)
-            if slug not in self._seen:
-                self._seen.add(slug)
-                self._queue.append(w)
+        slug = slugify(word)
+        if slug not in self._seen:
+            self._seen.add(slug)
+            if len(self._queue) < self.max_queue:
+                self._queue.append(word)
 
     def pending(self) -> int:
         return len(self._queue)
 
     def _run(self) -> None:
-        from .scraper import LookupError
+        from .scraper import NetworkError, fetch_word, suggest_words
 
         while not self._stop_event.is_set():
             try:
@@ -294,13 +289,24 @@ class Prefetcher:
                 if self._stop_event.wait(1.0):
                     break
                 continue
+            try:
+                related = suggest_words(word, limit=5)
+            except Exception:
+                related = []
+            for related_word in related:
+                slug = slugify(related_word)
+                if slug not in self._seen and len(self._queue) < self.max_queue:
+                    self._seen.add(slug)
+                    self._queue.append(related_word)
             if self.cache.has(word):
+                if self._stop_event.wait(self.interval):
+                    break
                 continue
             try:
                 page = fetch_word(word)
                 if page.found:
                     self.cache.save_page(page)
-            except LookupError:
+            except NetworkError:
                 pass
             if self._stop_event.wait(self.interval):
                 break
