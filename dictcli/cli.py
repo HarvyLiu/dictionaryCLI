@@ -27,7 +27,7 @@ from .wordlist import Wordlist
 
 console = Console()
 
-VERSION = "0.7.0"
+VERSION = "0.8.0"
 
 BANNER = r"""
   ____                ____  _      _    ____ _     ___
@@ -84,6 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  dict lang list      show all language pairs\n"
             "  dict lang en zhs    look up English words with Chinese (Simplified)\n"
             "  dict quiz           MCQ quiz from your starred words\n"
+            "  dict quiz --lang en-zhs  bilingual quiz (word <-> translation)\n"
             "  dict export my-words.txt    save wordlist as plain text\n"
             "  dict import my-words.txt    star every word in a text file\n"
             "  dict                enter interactive mode\n"
@@ -567,25 +568,69 @@ def _repl_audio(target: str | None, variant: str, cache: Cache) -> None:
         console.print(f"[red]'{target}' not found.[/]")
 
 
+def _parse_quiz_args(tokens: list[str]) -> tuple[int, str | None]:
+    count = 10
+    pair: str | None = None
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if token.lower() in {"--lang", "-l"} and i + 1 < len(tokens):
+            pair = tokens[i + 1]
+            i += 2
+        elif token.isdigit():
+            count = max(3, min(50, int(token)))
+            i += 1
+        else:
+            i += 1
+    return count, pair
+
+
 def _quiz_cmd(args_list: list[str]) -> int:
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         print("error: quiz needs an interactive terminal", file=sys.stderr)
         return 2
 
-    count = 10
-    if args_list and args_list[0].isdigit():
-        count = max(3, min(50, int(args_list[0])))
+    count, lang_override = _parse_quiz_args(args_list)
+
+    if lang_override is not None:
+        override = resolve_pair(lang_override)
+        if override is None:
+            console.print(f"[red]Unknown language pair:[/] {lang_override}")
+            console.print("[dim]see choices with: dict lang list[/]")
+            return 1
+        pair = override.code
+    else:
+        pair = _current_pair()
 
     wordlist = Wordlist()
     cache = Cache()
-    questions = build_questions(
-        cache, [e.get("word", "") for e in wordlist.entries()], count=count
-    )
+    words = [e.get("word", "") for e in wordlist.entries()]
+
+    if pair.startswith("en-"):
+        missing = [w for w in words if not cache.has(w, pair)]
+        fetched = 0
+        for w in missing:
+            try:
+                page = fetch_word(w, pair)
+            except (NetworkError, WordNotFoundError):
+                continue
+            if page.found:
+                cache.save_page(page, force=True, pair=pair)
+                fetched += 1
+            time.sleep(0.3)
+        if missing:
+            console.print(f"[dim]fetched {fetched}/{len(missing)} {pair} copies for the quiz[/]")
+
+    questions = build_questions(cache, words, count=count, pair=pair)
     if questions is None:
-        console.print("[bold red]Not enough words to build a quiz.[/]")
-        console.print(
-            "[dim]Star at least 4 words with offline copies first:[/] dict add <word>"
-        )
+        if pair != "en":
+            console.print("[bold red]Not enough words with translations to build a bilingual quiz.[/]")
+            console.print("[dim]Star at least 4 translatable words (check your connection), or run: dict quiz --lang en[/]")
+        else:
+            console.print("[bold red]Not enough words to build a quiz.[/]")
+            console.print(
+                "[dim]Star at least 4 words with offline copies first:[/] dict add <word>"
+            )
         return 1
 
     import questionary
@@ -602,8 +647,14 @@ def _quiz_cmd(args_list: list[str]) -> int:
         if q.direction == "def->word":
             console.print("[dim]Which word means:[/]")
             console.print(Text("  " + q.prompt, style="italic"))
-        else:
+        elif q.direction == "word->def":
             console.print("[dim]What does this mean?[/]")
+            console.print(Text("  " + q.prompt, style="bold cyan"))
+        elif q.direction == "trans->word":
+            console.print("[dim]Which English word means:[/]")
+            console.print(Text("  " + q.prompt, style="bold yellow"))
+        else:
+            console.print("[dim]How do you say:[/]")
             console.print(Text("  " + q.prompt, style="bold cyan"))
 
         choices = [
@@ -691,7 +742,7 @@ REPL_COMMANDS = [
     (":rm [word]", "unstar a word (default: last lookup)"),
     (":vk [word]", "play UK pronunciation"),
     (":vs [word]", "play US pronunciation"),
-    (":quiz [count]", "MCQ quiz from your starred words"),
+    (":quiz [count] [--lang pair]", "MCQ quiz (bilingual if pair set)"),
     (":lang [pair]", "show or set language, e.g. :lang en zhs"),
     (":cache on/off/status/list/clear", "manage the offline cache"),
     (":h", "show this help"),
@@ -745,7 +796,7 @@ def _repl() -> int:
                     _lang_cmd(["status"])
                 continue
             if lowered.startswith(":quiz"):
-                _quiz_cmd([line[5:].strip()] if line[5:].strip() else [])
+                _quiz_cmd(line[5:].split())
                 continue
             if lowered in {":h", ":help"}:
                 _repl_help()

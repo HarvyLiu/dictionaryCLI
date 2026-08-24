@@ -30,7 +30,9 @@ noun [ C or U ]
   Japanese, Korean, French, German, Spanish, and more; or point the other way
   (e.g. Chinese → English). Preference persists until you change it.
 - **Quiz** (`dict quiz`) - MCQ flashcards from your starred words, both directions:
-  definition → word and word → definition, with A/B/C/D arrow-key choices and a score
+  definition → word and word → definition, with A/B/C/D arrow-key choices and a score.
+  Bilingual mode (`dict quiz --lang en-zhs`) quizzes word ↔ translation using the
+  saved language pair (fetching any missing bilingual copies first)
 - **Synonyms** - entries show their thesaurus synonyms when Cambridge has them
 - **`--json`** - machine-readable output for lookups and search
 
@@ -77,6 +79,7 @@ pip install .
 | `dict lang en zhs` | set pair: English → Chinese Simplified (persists) |
 | `dict 苹果 --lang zhs-en` | one-shot reverse lookup, no preference change |
 | `dict quiz` | MCQ quiz from starred words (`dict quiz 20` for 20 questions) |
+| `dict quiz --lang en-zhs` | bilingual quiz: word ↔ translation |
 | `dict export my-words.txt` | write your wordlist as plain text |
 | `dict import my-words.txt` | star every word in a text file (`--no-fetch` to skip downloads) |
 | `dict cache on/off/status/list/clear` | manage the offline cache |

@@ -136,8 +136,8 @@ class Cache:
             return None
         return _page_from_dict(payload["page"])
 
-    def has(self, word_or_slug: str) -> bool:
-        name = slugify(word_or_slug)
+    def has(self, word_or_slug: str, pair: str = "en") -> bool:
+        name = cache_key(word_or_slug, pair)
         return (self.words_dir / f"{name}.json").exists()
 
     def cached_words(self) -> list[str]:
