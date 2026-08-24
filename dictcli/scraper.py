@@ -4,6 +4,7 @@ from urllib.parse import quote, urljoin
 import requests
 from bs4 import BeautifulSoup
 
+from .langs import LANG_PAIRS
 from .models import Definition, Entry, SenseGroup, WordPage
 
 BASE_URL = "https://dictionary.cambridge.org/dictionary/english/{word}"
@@ -43,8 +44,14 @@ def _clean(text: str | None) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _fetch_html(word: str) -> tuple[str, str]:
-    url = BASE_URL.format(word=quote(word.lower()))
+def _url_for(word: str, pair: str) -> str:
+    lang = LANG_PAIRS.get(pair)
+    path = lang.path if lang else "english"
+    return f"{SITE_URL}/dictionary/{path}/{quote(word.lower())}"
+
+
+def _fetch_html(word: str, pair: str = "en") -> tuple[str, str]:
+    url = _url_for(word, pair)
     try:
         resp = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
     except requests.RequestException as exc:
@@ -56,8 +63,8 @@ def _fetch_html(word: str) -> tuple[str, str]:
     return resp.text, url
 
 
-def fetch_word(word: str) -> WordPage:
-    html, url = _fetch_html(word)
+def fetch_word(word: str, pair: str = "en") -> WordPage:
+    html, url = _fetch_html(word, pair)
     return parse_html(html, word=word, url=url)
 
 
@@ -93,18 +100,78 @@ def parse_html(html: str, word: str | None = None, url: str | None = None) -> Wo
     panel = soup.select_one('div.pr.dictionary[data-id="cald4"]')
     if panel is None:
         panel = soup.select_one("div.pr.dictionary")
+    root = panel if panel is not None else (soup.select_one("article#page-content") or soup)
 
     page = WordPage(word=word or "", source_url=url)
 
-    if panel is not None:
-        title_el = panel.select_one(".di-title .hw.dhw")
-        if title_el is not None:
-            page.word = _clean(title_el.get_text()) or page.word
-        page.entries = [e for el in panel.select("div.pr.entry-body__el") if (e := _parse_entry(el))]
+    title_el = root.select_one(".di-title .hw.dhw") or root.select_one(".di-title")
+    if title_el is not None:
+        page.word = _clean(title_el.get_text()) or page.word
+    page.entries = [e for el in root.select("div.pr.entry-body__el") if (e := _parse_entry(el))]
+
+    if not page.entries:
+        page.entries = _parse_zh_source_entries(root)
 
     if not page.entries:
         page.suggestions = []
     return page
+
+
+def _parse_zh_source_entries(root) -> list[Entry]:
+    bodies = root.select("span.entry-body.dentry-body")
+    if not bodies:
+        return []
+    entries = []
+    for body in bodies:
+        entry = Entry()
+        group = SenseGroup()
+        for dwl in body.select(".dwl"):
+            trans_el = dwl.select_one(".dtrans")
+            text = _clean(trans_el.get_text()) if trans_el else ""
+            if not text:
+                continue
+
+            definition = Definition(text=text)
+
+            gloss = dwl.select_one(".def")
+            if gloss is not None:
+                g = _clean(gloss.get_text())
+                if g:
+                    definition.translations = [g]
+
+            xref = dwl.select_one(".epp-xref.dxref")
+            definition.cefr = _clean(xref.get_text()) if xref else None
+
+            pos_el = dwl.select_one(".pos.dpos-zh")
+            if pos_el is not None and entry.pos is None:
+                entry.pos = _clean(pos_el.get_text())
+
+            for ex in dwl.select(".dtrans-egzh"):
+                ex_text = _clean(ex.get_text())
+                ex_trans = ex.find_next_sibling(class_="dtrans-eg-transzh")
+                if ex_trans is not None:
+                    t = _clean(ex_trans.get_text())
+                    if t:
+                        ex_text = f"{ex_text} - {t}"
+                if ex_text:
+                    definition.examples.append(ex_text)
+
+            for info in dwl.select(".pron-info"):
+                if info.select_one(".uk.dloc") and entry.ipa_uk is None:
+                    pron = info.select_one(".pron.dpron")
+                    entry.ipa_uk = _clean(pron.get_text()) if pron else None
+                    entry.audio_uk = _audio_url(info, ".uk")
+                elif info.select_one(".us.dloc") and entry.ipa_us is None:
+                    pron = info.select_one(".pron.dpron")
+                    entry.ipa_us = _clean(pron.get_text()) if pron else None
+                    entry.audio_us = _audio_url(info, ".us")
+
+            group.definitions.append(definition)
+
+        if group.definitions:
+            entry.sense_groups.append(group)
+            entries.append(entry)
+    return entries
 
 
 def _parse_entry(el) -> Entry:
@@ -187,12 +254,27 @@ def _parse_def_block(db) -> Definition:
 
     body = db.select_one(".def-body.ddef_b")
     examples: list[str] = []
+    translations: list[str] = []
     if body is not None:
+        for trans in body.find_all(
+            "span", class_="trans", recursive=False
+        ) + body.find_all("div", class_="trans", recursive=False):
+            t = _clean(trans.get_text())
+            if t:
+                translations.append(t)
         for ex in body.select(".examp.dexamp"):
             eg = ex.select_one(".eg.deg")
-            t = _clean((eg or ex).get_text())
-            if t:
-                examples.append(t)
+            text = _clean((eg or ex).get_text())
+            ex_trans = ex.select_one(".trans.dtrans")
+            if ex_trans is not None:
+                t = _clean(ex_trans.get_text())
+                if t:
+                    text = f"{text} - {t}"
+            if text:
+                examples.append(text)
     definition.examples = examples
+    definition.translations = translations
+    if not definition.text and translations:
+        definition.text = translations[0]
 
     return definition

@@ -73,6 +73,11 @@ def _render_entry(entry: Entry, number: int | None = None) -> None:
                 line.append(f"({label}) ", style=LABEL_STYLE)
             line.append(definition.text)
             console.print(line)
+            if definition.translations:
+                trans = Text("       ", style="").append(
+                    " / ".join(definition.translations), style="bold yellow"
+                )
+                console.print(trans)
             for example in definition.examples:
                 ex = Text("       • ", style="dim").append(example, style=EXAMPLE_STYLE)
                 console.print(ex)

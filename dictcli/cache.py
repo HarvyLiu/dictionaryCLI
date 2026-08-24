@@ -27,6 +27,46 @@ def slugify(text: str) -> str:
     return s or "_"
 
 
+def cache_key(word: str, pair: str = "en") -> str:
+    slug = slugify(word)
+    if pair == "en":
+        return slug
+    return f"{slug}.{pair}"
+
+
+def get_setting(key: str, default=None):
+    try:
+        from platformdirs import user_data_dir
+
+        base = Path(user_data_dir("dictcli", appauthor=False))
+    except ImportError:
+        base = Path.home() / ".dictcli"
+    try:
+        with open(base / "config.json", encoding="utf-8") as f:
+            return json.load(f).get(key, default)
+    except (OSError, ValueError):
+        return default
+
+
+def set_setting(key: str, value) -> None:
+    try:
+        from platformdirs import user_data_dir
+
+        base = Path(user_data_dir("dictcli", appauthor=False))
+    except ImportError:
+        base = Path.home() / ".dictcli"
+    base.mkdir(parents=True, exist_ok=True)
+    config = {}
+    try:
+        with open(base / "config.json", encoding="utf-8") as f:
+            config = json.load(f)
+    except (OSError, ValueError):
+        pass
+    config[key] = value
+    with open(base / "config.json", "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2)
+
+
 class Cache:
     def __init__(self, base_dir: Path | None = None, enabled: bool | None = None):
         self.dir = Path(base_dir) if base_dir is not None else default_dir()
@@ -61,15 +101,15 @@ class Cache:
         self._write_config(config)
         self.enabled = value
 
-    def path_for(self, word: str) -> Path:
-        return self.words_dir / f"{slugify(word)}.json"
+    def path_for(self, word: str, pair: str = "en") -> Path:
+        return self.words_dir / f"{cache_key(word, pair)}.json"
 
-    def save_page(self, page: WordPage, force: bool = False) -> bool:
+    def save_page(self, page: WordPage, force: bool = False, pair: str = "en") -> bool:
         if not force and not self.enabled:
             return False
-        if not page.found or not slugify(page.word):
+        key = cache_key(page.word, pair)
+        if not page.found or not key.strip("."):
             return False
-        key = slugify(page.word)
         payload = {
             "cache_version": CACHE_VERSION,
             "fetched_at": datetime.now(timezone.utc).isoformat(),
@@ -83,8 +123,8 @@ class Cache:
             return False
         return True
 
-    def load_word(self, word: str) -> WordPage | None:
-        return self.load_slug(slugify(word))
+    def load_word(self, word: str, pair: str = "en") -> WordPage | None:
+        return self.load_slug(cache_key(word, pair))
 
     def load_slug(self, slug: str) -> WordPage | None:
         try:
@@ -150,6 +190,7 @@ def _page_to_dict(page: WordPage) -> dict:
                                 "cefr": d.cefr,
                                 "labels": d.labels,
                                 "examples": d.examples,
+                                "translations": d.translations,
                             }
                             for d in g.definitions
                         ],
@@ -183,6 +224,7 @@ def _entry_from_dict(e: dict):
                 cefr=d.get("cefr"),
                 labels=list(d.get("labels", [])),
                 examples=list(d.get("examples", [])),
+                translations=list(d.get("translations", [])),
             )
             for d in g.get("definitions", [])
         ]

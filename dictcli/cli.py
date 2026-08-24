@@ -10,7 +10,8 @@ from rich.table import Table
 from rich.text import Text
 
 from .audio import play_url
-from .cache import Cache, Prefetcher, _page_to_dict, default_dir, slugify
+from .cache import Cache, Prefetcher, _page_to_dict, cache_key, default_dir, get_setting, set_setting, slugify
+from .langs import LANG_PAIRS, list_pairs, resolve_from_tokens, resolve_pair
 from .formatter import render_word_page
 from .models import WordPage
 from .picker import pick_word
@@ -26,7 +27,7 @@ from .wordlist import Wordlist
 
 console = Console()
 
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 
 BANNER = r"""
   ____                ____  _      _    ____ _     ___
@@ -80,6 +81,8 @@ def build_parser() -> argparse.ArgumentParser:
             "  dict list           browse starred words with arrow keys,\n"
             "                      enter looks one up (--plain for a plain list)\n"
             "  dict remove apple   unstar a word\n"
+            "  dict lang list      show all language pairs\n"
+            "  dict lang en zhs    look up English words with Chinese (Simplified)\n"
             "  dict quiz           MCQ quiz from your starred words\n"
             "  dict export my-words.txt    save wordlist as plain text\n"
             "  dict import my-words.txt    star every word in a text file\n"
@@ -123,6 +126,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="with lookup/search: print machine-readable JSON instead of formatted text",
     )
+    parser.add_argument(
+        "--lang",
+        metavar="PAIR",
+        help="language pair for this lookup, e.g. en-zhs (see: dict lang list)",
+    )
     return parser
 
 
@@ -148,22 +156,25 @@ def _page_json(page: WordPage) -> dict:
 
 
 def _lookup_full(
-    word: str, say: str | None = None, as_json: bool = False
+    word: str,
+    say: str | None = None,
+    as_json: bool = False,
+    pair: str = "en",
 ) -> tuple[int, str | None]:
     cache = Cache()
     try:
-        page = fetch_word(word)
+        page = fetch_word(word, pair)
     except WordNotFoundError:
         page = WordPage(word=word)
     except NetworkError as exc:
         if as_json:
             print(json.dumps({"ok": False, "error": str(exc)}))
             return 2, None
-        return _offline_lookup(word, f"Network request failed ({exc})"), None
+        return _offline_lookup(word, f"Network request failed ({exc})", pair), None
 
     if page.found:
         if cache.enabled:
-            cache.save_page(page)
+            cache.save_page(page, pair=pair)
         if as_json:
             print(json.dumps(_page_json(page), ensure_ascii=False))
             return 0, page.word
@@ -178,7 +189,7 @@ def _lookup_full(
         if as_json:
             print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
             return 2, None
-        return _offline_lookup(word, f"Network request failed ({exc})"), None
+        return _offline_lookup(word, f"Network request failed ({exc})", pair), None
 
     if as_json:
         print(
@@ -192,13 +203,13 @@ def _lookup_full(
     return 1, None
 
 
-def _lookup(word: str, say: str | None = None, as_json: bool = False) -> int:
-    return _lookup_full(word, say=say, as_json=as_json)[0]
+def _lookup(word: str, say: str | None = None, as_json: bool = False, pair: str = "en") -> int:
+    return _lookup_full(word, say=say, as_json=as_json, pair=pair)[0]
 
 
-def _offline_lookup(word: str, reason: str) -> int:
+def _offline_lookup(word: str, reason: str, pair: str = "en") -> int:
     cache = Cache()
-    cached = cache.load_word(word)
+    cached = cache.load_word(word, pair) or cache.load_word(word, "en")
     if cached is not None and cached.found:
         render_word_page(cached, cached=True)
         return 0
@@ -635,6 +646,38 @@ def _quiz_cmd(args_list: list[str]) -> int:
     return 0
 
 
+def _current_pair() -> str:
+    return get_setting("lang", "en") or "en"
+
+
+def _lang_cmd(args_list: list[str]) -> int:
+    if not args_list or args_list[0].lower() == "list":
+        current = _current_pair()
+        console.print("[bold]Available language pairs[/] [dim](* = current)[/]")
+        for pair in list_pairs():
+            mark = " [green]*[/]" if pair.code == current else ""
+            code_style = "cyan" if pair.code == current else "yellow"
+            console.print(f"  [{code_style}]{pair.code:8s}[/] {pair.name}{mark}")
+        return 0
+
+    if args_list[0].lower() in {"status", "current"}:
+        pair = resolve_pair(_current_pair())
+        console.print(f"Current language: [cyan]{pair.code}[/] ({pair.name})")
+        console.print("[dim]change with: dict lang <from> <to>  e.g. dict lang en zhs[/]")
+        return 0
+
+    pair = resolve_from_tokens(args_list)
+    if pair is None:
+        console.print(f"[red]Unknown language pair:[/] {' '.join(args_list)}")
+        console.print("[dim]see choices with: dict lang list[/]")
+        return 1
+
+    set_setting("lang", pair.code)
+    console.print(f"[green]Language set to[/] [cyan]{pair.code}[/] ({pair.name})")
+    console.print("[dim]lookups now use this pair until you change it.[/]")
+    return 0
+
+
 def _is_cache_cmd(line: str) -> bool:
     parts = line.lower().split()
     return len(parts) >= 1 and parts[0] == "cache"
@@ -649,6 +692,7 @@ REPL_COMMANDS = [
     (":vk [word]", "play UK pronunciation"),
     (":vs [word]", "play US pronunciation"),
     (":quiz [count]", "MCQ quiz from your starred words"),
+    (":lang [pair]", "show or set language, e.g. :lang en zhs"),
     (":cache on/off/status/list/clear", "manage the offline cache"),
     (":h", "show this help"),
     (":q", "quit"),
@@ -674,9 +718,10 @@ def _repl() -> int:
     _repl_help()
     state = "[green]ON[/]" if cache.enabled else "[red]OFF[/]"
     stats = cache.stats()
+    pair = resolve_pair(_current_pair())
     console.print(
-        f"[dim]offline cache: {state}"
-        f" - {stats['count']} words saved. Type a word to begin.[/]"
+        f"[dim]offline cache: {state} - {stats['count']} words saved | "
+        f"language: {pair.code}. Type a word to begin.[/]"
     )
     last_word: str | None = None
     last_status = 0
@@ -692,6 +737,13 @@ def _repl() -> int:
             lowered = line.lower()
             if lowered in {":q", ":quit", ":exit"}:
                 break
+            if lowered.startswith(":lang"):
+                arg = line[5:].strip()
+                if arg:
+                    _lang_cmd(arg.split())
+                else:
+                    _lang_cmd(["status"])
+                continue
             if lowered.startswith(":quiz"):
                 _quiz_cmd([line[5:].strip()] if line[5:].strip() else [])
                 continue
@@ -744,7 +796,7 @@ def _repl() -> int:
             elif lowered.startswith(":"):
                 console.print(f"[red]unknown command[/] {line.split()[0]}")
             else:
-                last_status, resolved = _lookup_full(line)
+                last_status, resolved = _lookup_full(line, pair=_current_pair())
                 if resolved:
                     last_word = resolved
                 if last_status == 0 and cache.enabled:
@@ -762,6 +814,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if not words:
         return _repl()
+
+    if words[0].lower() == "lang":
+        return _lang_cmd(words[1:])
 
     if words[0].lower() == "quiz":
         return _quiz_cmd(words[1:])
@@ -793,7 +848,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.pick is not None:
         parser.error("-p/--pick only works with 'search'")
 
-    return _lookup(" ".join(words), say=args.audio, as_json=args.json)
+    pair = _current_pair()
+    if args.lang:
+        override = resolve_pair(args.lang)
+        if override is None:
+            parser.error(f"unknown language pair '{args.lang}' - see: dict lang list")
+        pair = override.code
+
+    return _lookup(" ".join(words), say=args.audio, as_json=args.json, pair=pair)
 
 
 if __name__ == "__main__":

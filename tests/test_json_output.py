@@ -8,7 +8,7 @@ from dictcli.models import WordPage
 
 class TestJsonLookup:
     def test_found_word_outputs_json(self, monkeypatch, apple_page, capsys):
-        monkeypatch.setattr(cli, "fetch_word", lambda w: apple_page)
+        monkeypatch.setattr(cli, "fetch_word", lambda w, pair="en": apple_page)
         rc, word = cli._lookup_full("apple", as_json=True)
 
         assert rc == 0
@@ -20,7 +20,7 @@ class TestJsonLookup:
 
     def test_not_found_includes_suggestions(self, monkeypatch, capsys):
         page = WordPage(word="zzz")
-        monkeypatch.setattr(cli, "fetch_word", lambda w: page)
+        monkeypatch.setattr(cli, "fetch_word", lambda w, pair="en": page)
         monkeypatch.setattr(cli, "suggest_words", lambda w, limit=5: ["applesauce"])
 
         rc, _ = cli._lookup_full("zzz", as_json=True)
@@ -33,7 +33,7 @@ class TestJsonLookup:
     def test_network_error_json(self, monkeypatch, capsys):
         from dictcli.scraper import NetworkError
 
-        def boom(w):
+        def boom(w, pair="en"):
             raise NetworkError("offline")
 
         monkeypatch.setattr(cli, "fetch_word", boom)

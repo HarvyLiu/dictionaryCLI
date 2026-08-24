@@ -7,6 +7,7 @@ class Definition:
     cefr: str | None = None
     labels: list[str] = field(default_factory=list)
     examples: list[str] = field(default_factory=list)
+    translations: list[str] = field(default_factory=list)
 
 
 @dataclass
