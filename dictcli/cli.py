@@ -27,7 +27,7 @@ from .wordlist import Wordlist
 
 console = Console()
 
-VERSION = "0.8.0"
+VERSION = "0.8.1"
 
 BANNER = r"""
   ____                ____  _      _    ____ _     ___

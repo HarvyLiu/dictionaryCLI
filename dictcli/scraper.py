@@ -107,7 +107,9 @@ def parse_html(html: str, word: str | None = None, url: str | None = None) -> Wo
     title_el = root.select_one(".di-title .hw.dhw") or root.select_one(".di-title")
     if title_el is not None:
         page.word = _clean(title_el.get_text()) or page.word
-    page.entries = [e for el in root.select("div.pr.entry-body__el") if (e := _parse_entry(el))]
+    page.entries = [
+        e for el in root.select(".entry-body__el") if (e := _parse_entry(el))
+    ]
 
     if not page.entries:
         page.entries = _parse_zh_source_entries(root)
@@ -177,8 +179,15 @@ def _parse_zh_source_entries(root) -> list[Entry]:
 def _parse_entry(el) -> Entry:
     entry = Entry()
 
-    pos_el = el.select_one(".posgram .pos.dpos")
-    entry.pos = _clean(pos_el.get_text()) if pos_el else None
+    pos_el = el.select_one(".posgram .pos.dpos") or el.select_one(
+        ".pos-header .pos.dpos"
+    )
+    if pos_el is not None:
+        pos_text = _clean(pos_el.get_text())
+        if not pos_text:
+            title_attr = _clean(pos_el.get("title") or "")
+            pos_text = title_attr.split(" ")[0] if title_attr else ""
+        entry.pos = pos_text or None
 
     gram_el = el.select_one(".posgram .gram.dgram")
     entry.grammar = _clean(gram_el.get_text()) if gram_el else None
